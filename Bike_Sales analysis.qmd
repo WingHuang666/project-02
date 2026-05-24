@@ -1,6 +1,10 @@
 # Bike Sales Analysis
 
 ```{python}
+# =========================
+# LOAD DATA
+# =========================
+
 import pandas as pd
 
 file_path = "Bike_Sales.csv"
@@ -9,5 +13,809 @@ df = pd.read_csv(file_path)
 df.columns = df.columns.str.replace(" ", "_")
 
 df.head()
+```
+
+```{python}
+# =========================
+# IMPORT LIBRARIES
+# =========================
+
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+from sklearn.linear_model import LinearRegression
+
+```
+
+
+```{python}
+# =========================
+# BASIC CLEANING
+# =========================
+
+# Remove duplicate rows
+df = df.drop_duplicates()
+
+# Convert date column
+if 'Date' in df.columns:
+    df['Date'] = pd.to_datetime(df['Date'])
+
+# Check missing values
+print(df.isnull().sum())
+
+df
+
+```
+
+
+
+```{python}
+# =========================
+# FEATURE ENGINEERING
+# =========================
+
+# Create Profit Margin
+if 'Profit' in df.columns and 'Revenue' in df.columns:
+    df['Profit_Margin'] = df['Profit'] / df['Revenue']
+
+# Extract Month and Year
+if 'Date' in df.columns:
+    df['Month'] = df['Date'].dt.month
+    df['Year'] = df['Date'].dt.year
+
+
+df
+
+```
+
+
+
+```{python}
+# =========================
+# CUSTOMER SEGMENTATION
+# METHOD: K-MEANS CLUSTERING + ELBOW METHOD + SILHOUETTE SCORE
+# =========================
+
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+
+print("\n===== CUSTOMER SEGMENTATION =====")
+
+# Select numeric features for clustering
+cluster_features = [
+    "Revenue",
+    "Profit",
+    "Order_Quantity",
+    "Unit_Price"
+]
+
+cluster_features = [col for col in cluster_features if col in df.columns]
+
+# Keep only selected columns and remove missing values
+cluster_data = df[cluster_features].dropna()
+
+# Sample data for faster clustering
+sample_size = min(5000, len(cluster_data))
+
+sample_df = cluster_data.sample(
+    n=sample_size,
+    random_state=42
+).copy()
+
+# Scale the sampled data
+scaler = StandardScaler()
+scaled_data = scaler.fit_transform(sample_df)
+
+# Test different k values
+k_values = range(2, 10)
+
+inertia_values = []
+silhouette_values = []
+
+for k in k_values:
+
+    kmeans = KMeans(
+        n_clusters=k,
+        random_state=42,
+        n_init=10
+    )
+
+    labels = kmeans.fit_predict(scaled_data)
+
+    inertia_values.append(kmeans.inertia_)
+    silhouette_values.append(
+        silhouette_score(scaled_data, labels)
+    )
+
+# Store evaluation results
+k_results = pd.DataFrame({
+    "k": list(k_values),
+    "Inertia": inertia_values,
+    "Silhouette_Score": silhouette_values
+})
+
+print(k_results)
+
+# Plot Elbow Method
+plt.figure(figsize=(8, 5))
+
+plt.plot(
+    k_results["k"],
+    k_results["Inertia"],
+    marker="o"
+)
+
+plt.title("Elbow Method for Optimal K")
+plt.xlabel("Number of Clusters")
+plt.ylabel("Inertia")
+
+plt.show()
+
+# Plot Silhouette Score
+plt.figure(figsize=(8, 5))
+
+plt.plot(
+    k_results["k"],
+    k_results["Silhouette_Score"],
+    marker="o"
+)
+
+plt.title("Silhouette Score by K")
+plt.xlabel("Number of Clusters")
+plt.ylabel("Silhouette Score")
+
+plt.show()
+
+# Based on the elbow plot and business interpretability,
+# k = 4 was selected as the optimal number of clusters.
+
+optimal_k = 4
+
+print(f"Selected number of clusters: {optimal_k}")
+
+# Final K-Means model
+final_kmeans = KMeans(
+    n_clusters=optimal_k,
+    random_state=42,
+    n_init=10
+)
+
+sample_df["Cluster"] = (
+    final_kmeans.fit_predict(scaled_data) + 1
+)
+
+# Segment summary
+segment_summary = sample_df.groupby("Cluster").mean()
+
+print(segment_summary)
+
+# Visualize clusters
+plt.figure(figsize=(8, 6))
+
+sns.scatterplot(
+    data=sample_df,
+    x="Revenue",
+    y="Profit",
+    hue="Cluster",
+    palette="Set2"
+)
+
+plt.title("Customer Segmentation by Revenue and Profit")
+plt.xlabel("Revenue")
+plt.ylabel("Profit")
+
+plt.show()
+
+```
+
+
+## Cluster Summary
+
+### Cluster 1
+- Moderate revenue and profit
+- High order quantity
+- Low unit price
+- Represents volume-based customers purchasing lower-priced products in larger quantities
+
+### Cluster 2
+- Highest revenue and profit
+- Extremely high unit price
+- Low purchase quantity
+- Represents premium or high-end customers generating strong profit from expensive products
+
+### Cluster 3
+- Lowest revenue, profit, and order quantity
+- Represents low-value or occasional customers with limited purchasing activity
+
+### Cluster 4
+- High revenue and profit
+- High unit price
+- Moderate purchase quantity
+- Represents mid-to-high value customers purchasing relatively expensive products consistently
+
+
+```{python}
+# Predict clusters for the full dataset
+
+full_scaled_data = scaler.transform(cluster_data)
+
+cluster_labels = (
+    final_kmeans.predict(full_scaled_data) + 1
+)
+
+# Add cluster labels back to full dataset
+
+cluster_data["Cluster"] = cluster_labels
+
+# Merge cluster labels back into original dataframe
+
+df_with_clusters = df.loc[cluster_data.index].copy()
+
+df_with_clusters["Cluster"] = cluster_labels
+
+df_with_clusters
+
+```
+
+
+```{python}
+# =========================
+# CUSTOMER SEGMENTATION
+# =========================
+
+print("\n===== CUSTOMER SEGMENTATION =====")
+
+# Revenue and profit by age group
+age_summary = (
+    df.groupby('Age_Group')[['Revenue', 'Profit']]
+    .mean()
+    .sort_values(by='Revenue', ascending=False)
+)
+
+print("\nRevenue and Profit by Age Group")
+print(age_summary)
+
+# Revenue and profit by gender
+if 'Customer_Gender' in df.columns:
+
+    gender_summary = (
+        df.groupby('Customer_Gender')[['Revenue', 'Profit']]
+        .mean()
+        .sort_values(by='Revenue', ascending=False)
+    )
+
+    print("\nRevenue and Profit by Gender")
+    print(gender_summary)
+
+# Top countries by revenue
+country_summary = (
+    df.groupby('Country')['Revenue']
+    .sum()
+    .sort_values(ascending=False)
+    .head(10)
+)
+
+print("\nTop Countries by Revenue")
+print(country_summary)
+
+# Visualization
+plt.figure(figsize=(8,5))
+
+sns.barplot(
+    x=country_summary.values,
+    y=country_summary.index
+)
+
+plt.title('Top Countries by Revenue')
+plt.xlabel('Revenue')
+plt.ylabel('Country')
+
+plt.show()
+
+```
+
+## Customer Segmentation Analysis Summary
+
+The customer segmentation analysis revealed several important business insights across age groups, gender, and geographic markets.
+
+### Age Group Insights
+
+Young Adults (25–34) generated the highest average revenue and profit, followed closely by Adults (35–64). This suggests that younger and middle-aged customers are the core revenue-driving customer groups for the business. In contrast, Seniors (64+) produced significantly lower revenue and profit, indicating lower purchasing activity or lower-value purchases.
+
+This finding suggests that marketing campaigns, loyalty programs, and premium product promotions may be most effective when targeting customers between 25 and 64 years old.
+
+### Gender Insights
+
+Female customers generated slightly higher average revenue and profit compared to male customers. However, the difference was relatively small, suggesting that both genders contribute similarly to overall business performance.
+
+This indicates that the business may not require heavily gender-specific strategies, but female-focused campaigns could still provide incremental value.
+
+### Geographic Insights
+
+The United States was the largest revenue-generating market by a substantial margin, followed by Australia and the United Kingdom. These countries appear to be the strongest and most mature markets in the dataset.
+
+At the same time, countries such as Germany, France, and Canada still generated meaningful revenue, suggesting potential opportunities for future market expansion and localized marketing strategies.
+
+Overall, the analysis suggests that the business performs strongest in English-speaking markets and among younger adult customer segments, particularly those with higher purchasing power and stronger product engagement.
+
+
+```{python}
+# =========================
+# PRODUCT PERFORMANCE
+# =========================
+
+print("\n===== PRODUCT PERFORMANCE =====")
+
+# Category-level performance
+category_summary = (
+    df.groupby('Sub_Category')
+    .agg({
+        'Revenue': 'sum',
+        'Profit': 'sum',
+        'Order_Quantity': 'sum'
+    })
+    .sort_values(by='Revenue', ascending=False)
+)
+
+print(category_summary.head(10))
+
+# Calculate profit margin
+
+df['Profit_Margin'] = (
+    df['Profit'] / df['Revenue']
+) * 100
+
+# Products with highest profit margin
+margin_summary = (
+    df.groupby('Product')['Profit_Margin']
+    .mean()
+    .sort_values(ascending=False)
+    .head(10)
+)
+
+print("\nTop Products by Profit Margin")
+print(margin_summary)
+
+# Visualization
+plt.figure(figsize=(10,6))
+
+sns.barplot(
+    x=category_summary.head(10).index,
+    y=category_summary.head(10)['Revenue']
+)
+
+plt.xticks(rotation=45)
+
+plt.title('Top Product Categories by Revenue')
+plt.xlabel('Product Category')
+plt.ylabel('Revenue')
+
+plt.show()
+
+```
+
+## Product Performance Analysis Summary
+
+The product performance analysis revealed clear differences between high-revenue products, high-volume products, and high-margin products.
+
+### Revenue and Profit Insights
+
+Road Bikes generated the highest total revenue and profit by a large margin, followed by Mountain Bikes and Touring Bikes. These categories appear to be the company's primary revenue drivers and likely represent the core premium product lines.
+
+Although bike categories generated the largest overall revenue, several accessory categories such as Helmets and Tires and Tubes produced extremely high sales volume with strong profitability. This suggests that accessories play an important supporting role in the business model through frequent and repeat purchases.
+
+---
+
+### High-Volume vs Premium Products
+
+Tires and Tubes recorded the highest order quantity by a significant margin, while Bottles and Cages and Helmets also showed very high sales volume. However, these products generated lower revenue per transaction compared to bike categories.
+
+In contrast, Road Bikes generated very high revenue and profit with relatively low order quantity, indicating a premium pricing structure and higher customer spending per purchase.
+
+This suggests that the business benefits from a balanced product strategy:
+
+* High-end bikes drive revenue and profit
+* Accessories generate consistent transaction volume and repeat customer engagement
+
+---
+
+### Profit Margin Insights
+
+Several lower-cost accessory products achieved exceptionally high profit margins. Products such as Road Tire Tube, Racing Socks, and Road Bottle Cage generated profit margins above 60%.
+
+This indicates that smaller accessory products may be highly efficient profit generators despite lower individual selling prices. These products could be strong candidates for:
+
+* Cross-selling
+* Bundle promotions
+* Checkout recommendations
+* Loyalty program incentives
+
+------
+
+### Business Implications
+
+The analysis suggests that the company relies on a two-layer revenue model:
+
+1. Premium bicycles generate major revenue and profit
+2. Accessories create high-margin recurring sales opportunities
+
+A combined strategy focusing on premium bike sales while increasing accessory attachment rates could significantly improve overall profitability and customer lifetime value.
+
+
+```{python}
+# =========================
+# PRICING & PROFITABILITY
+# =========================
+
+print("\n===== PRICING & PROFITABILITY =====")
+
+# Correlation analysis
+pricing_corr = df[[
+    'Unit_Cost',
+    'Unit_Price',
+    'Revenue',
+    'Profit'
+]].corr()
+
+print(pricing_corr)
+
+# Revenue vs Unit Price
+plt.figure(figsize=(8,6))
+
+sns.scatterplot(
+    data=df.sample(min(5000, len(df)), random_state=42),
+    x='Unit_Price',
+    y='Revenue'
+)
+
+plt.title('Revenue vs Unit Price')
+plt.xlabel('Unit Price')
+plt.ylabel('Revenue')
+
+plt.show()
+
+# Profitability by country
+country_profit = (
+    df.groupby('Country')[['Revenue', 'Profit']]
+    .mean()
+    .sort_values(by='Profit', ascending=False)
+)
+
+print("\nCountry Profitability")
+print(country_profit.head(10))
+
+```
+
+
+## Pricing & Profitability Analysis Summary
+
+The pricing and profitability analysis revealed very strong positive relationships between product pricing, revenue generation, and profitability.
+
+### Pricing Relationships
+
+Unit Cost and Unit Price showed an extremely high correlation (0.998), indicating that products with higher production or acquisition costs are generally sold at proportionally higher prices. This suggests that the pricing strategy is highly structured and consistent across product categories.
+
+---
+
+### Revenue and Profit Drivers
+
+Revenue and Profit also demonstrated a very strong correlation (0.957), meaning that products generating higher sales revenue tend to generate significantly higher profit as well.
+
+In addition:
+
+* Unit Price showed strong positive correlations with both Revenue (0.818) and Profit (0.749)
+* Unit Cost also showed strong positive relationships with Revenue and Profit
+
+These findings suggest that higher-priced products contribute substantially to overall business performance.
+
+---
+
+### Business Implications
+
+The analysis indicates that the business benefits strongly from premium pricing strategies. High-priced products not only generate larger revenue per transaction but also contribute significantly to profitability.
+
+At the same time, the strong relationship between revenue and profit suggests that sales growth is translating efficiently into financial performance rather than being offset by excessive costs.
+
+Overall, the results imply that expanding premium product lines and maintaining pricing discipline may help maximize long-term profitability while continuing to drive revenue growth.
+
+---------
+
+
+### Key Insights from Revenue vs Unit Price chart
+
+1. The chart suggests clear pricing tiers across products, including low-cost accessories, medium-priced products, and premium bikes.
+
+2. Revenue is strongly influenced by order quantity. Products with the same unit price can generate very different revenue depending on how many units are purchased.
+
+3. High-priced products contribute significantly to total revenue. The upper-right portion of the chart likely represents premium bikes, bulk purchases, or high-value customers.
+
+---------
+
+
+## Country Profitability Analysis Summary
+
+The country profitability analysis revealed meaningful differences in average revenue and profit performance across markets.
+
+### High-Value Markets
+
+Australia generated the highest average revenue per transaction, indicating strong customer spending and potentially greater demand for premium products. Germany and the United Kingdom also demonstrated strong revenue performance, suggesting healthy purchasing power and strong market engagement.
+
+Among all countries, the United Kingdom generated the highest average profit, which may indicate a more efficient balance between pricing and operational costs. This suggests that the UK market may be especially effective at converting sales into profitability.
+
+---
+
+### Stable Core Markets
+
+The United States generated the highest total revenue overall in earlier analysis, but its average revenue and profit per transaction were more moderate compared to Australia and the United Kingdom. This may suggest that the U.S. market relies more heavily on transaction volume rather than premium pricing.
+
+Canada and France showed comparatively lower average revenue and profit levels, indicating either lower customer spending, lower-priced product mix, or smaller market scale.
+
+---
+
+### Business Implications
+
+The analysis suggests that different countries contribute to business performance in different ways:
+
+* The United States appears to be the largest volume-driven market
+* Australia and Germany show strong premium purchasing behavior
+* The United Kingdom appears highly efficient in generating profit
+
+These findings suggest potential opportunities for:
+
+* Expanding premium product strategies in Australia and Germany
+* Strengthening profitability-focused campaigns in the United Kingdom
+* Increasing customer spending and product mix optimization in lower-performing markets such as Canada and France
+
+Overall, the results highlight the importance of localized pricing and market strategies rather than applying a single global approach across all countries.
+
+
+
+```{python}
+# =========================
+# SEASONALITY & TRENDS
+# =========================
+
+print("\n===== SEASONALITY & TRENDS =====")
+
+# Convert date column
+
+df['Date'] = pd.to_datetime(df['Date'])
+
+# Create month and year columns
+
+df['Month'] = df['Date'].dt.month
+
+df['Year'] = df['Date'].dt.year
+
+# Monthly revenue
+monthly_revenue = (
+    df.groupby('Month')['Revenue']
+    .sum()
+)
+
+print(monthly_revenue)
+
+# Plot monthly revenue
+plt.figure(figsize=(8,5))
+
+sns.lineplot(
+    x=monthly_revenue.index,
+    y=monthly_revenue.values,
+    marker='o'
+)
+
+plt.title('Monthly Revenue Trend')
+plt.xlabel('Month')
+plt.ylabel('Revenue')
+
+plt.show()
+
+# Year-over-year revenue
+
+yearly_revenue = (
+    df.groupby('Year')['Revenue']
+    .sum()
+)
+
+print(yearly_revenue)
+
+# Plot yearly trend
+plt.figure(figsize=(8,5))
+
+sns.lineplot(
+    x=yearly_revenue.index,
+    y=yearly_revenue.values,
+    marker='o'
+)
+
+plt.title('Yearly Revenue Trend')
+plt.xlabel('Year')
+plt.ylabel('Revenue')
+
+plt.show()
+
+```
+
+## Seasonality & Trends Analysis Summary
+
+The monthly revenue analysis revealed noticeable seasonal patterns throughout the year.
+
+### Peak Sales Periods
+
+Revenue was highest in December, followed by June and May. This suggests that sales activity increases significantly during the holiday season and early summer months.
+
+The strong December performance may be driven by:
+
+* Holiday shopping
+* Year-end promotions
+* Gift purchases
+
+Meanwhile, the high revenue in May and June may reflect increased outdoor activity and seasonal demand for bicycles and cycling accessories.
+
+---
+
+### Lower Sales Periods
+
+Revenue declined noticeably between July and October, with July and August showing the lowest monthly revenue levels. This may indicate reduced purchasing activity after the early summer sales peak.
+
+Possible explanations include:
+
+* Seasonal demand fluctuations
+* Reduced promotional activity
+* Customers making large purchases earlier in the year
+
+---
+
+### Business Implications
+
+The analysis suggests that the business experiences clear seasonal demand cycles. As a result:
+
+* Marketing campaigns and inventory planning may be most important before May–June and December
+* Promotions during lower-performing months could help stabilize sales
+* Seasonal forecasting may improve inventory management and operational planning
+
+Overall, the results indicate that sales performance is strongly influenced by seasonal purchasing behavior and holiday-related demand.
+
+
+## Yearly Revenue Trend Analysis Summary
+
+The yearly revenue analysis showed strong overall business growth between 2011 and 2016, although some fluctuations were observed.
+
+### Growth Trends
+
+Revenue increased steadily from 2011 to 2013, followed by a slight decline in 2014. However, the business experienced a major revenue increase in 2015, reaching the highest revenue level in the dataset.
+
+This suggests that the company experienced significant market expansion or stronger customer demand during this period.
+
+---
+
+### Peak Performance
+
+2015 generated the highest total revenue, indicating exceptionally strong business performance. Possible contributing factors may include:
+
+* Increased sales volume
+* Expansion of premium product sales
+* Successful marketing strategies
+* Growth in international markets
+
+Although revenue decreased slightly in 2016, it remained substantially higher than earlier years, suggesting that the overall long-term growth trend remained positive.
+
+---
+
+### Business Implications
+
+The analysis indicates that the business achieved strong long-term revenue growth over the six-year period. Despite some year-to-year fluctuations, the company appears to have expanded successfully over time.
+
+These findings suggest that:
+
+* Demand for cycling products increased overall
+* The company may have strengthened its market position over time
+* Premium products and international markets may have contributed to long-term growth
+
+Overall, the yearly trend reflects a growing and expanding business with strong revenue performance across multiple years.
+
+
+
+
+```{python}
+# =========================
+# MARKET EXPANSION OPPORTUNITIES
+# =========================
+
+print("\n===== MARKET EXPANSION OPPORTUNITIES =====")
+
+# Revenue by country
+country_market = (
+    df.groupby('Country')
+    .agg({
+        'Revenue': 'sum',
+        'Profit': 'sum',
+        'Order_Quantity': 'sum'
+    })
+    .sort_values(by='Revenue', ascending=False)
+)
+
+print(country_market.head(10))
+
+# Analyze category demand by country
+country_category = (
+    df.groupby(['Country', 'Sub_Category'])['Revenue']
+    .sum()
+    .reset_index()
+)
+
+# Top country-category combinations
+country_category_top = (
+    country_category
+    .sort_values(by='Revenue', ascending=False)
+    .head(15)
+)
+
+print("\nTop Country-Category Combinations")
+print(country_category_top)
+
+# Visualization
+plt.figure(figsize=(10,6))
+
+sns.barplot(
+    data=country_category_top,
+    x='Revenue',
+    y='Country',
+    hue='Sub_Category'
+)
+
+plt.title('Top Revenue Opportunities by Country and Category')
+plt.xlabel('Revenue')
+plt.ylabel('Country')
+
+plt.show()
+
+```
+
+
+## Market Expansion Opportunities Analysis Summary
+
+The market expansion analysis identified several countries and product categories with strong growth potential and high business value.
+
+### Strongest Markets
+
+The United States generated the highest total revenue, profit, and order quantity, making it the largest and most important market in the dataset. Australia and the United Kingdom also demonstrated strong performance, indicating high customer demand and healthy market engagement.
+
+Canada generated relatively lower total revenue compared to the United States and Australia, but it maintained strong profitability and a high order quantity, suggesting consistent customer activity and potential for future expansion.
+
+---
+
+### Product Demand by Country
+
+Road Bikes consistently generated the highest revenue across nearly all major countries, including the United States, Australia, the United Kingdom, Germany, France, and Canada. This suggests that premium bicycle products are the primary driver of international sales performance.
+
+Mountain Bikes also showed strong demand across multiple countries, particularly in the United States and Australia, indicating a broad customer interest in outdoor and recreational cycling products.
+
+In addition, accessory categories such as Helmets and Tires and Tubes generated substantial revenue in the United States, suggesting opportunities for cross-selling and recurring purchases beyond high-ticket bicycle sales.
+
+---
+
+### Business Implications
+
+The analysis suggests that:
+
+* The United States remains the core market for both premium bikes and accessory products
+* Australia and the United Kingdom may offer strong opportunities for continued premium product expansion
+* Road Bikes appear to be the most globally successful product category
+* Accessories may support long-term recurring revenue and customer retention strategies
+
+Overall, the results indicate that combining premium bicycle sales with high-volume accessory products may be an effective strategy for international market growth and long-term profitability.
+
+
+
+```{python}
+
 ```
 
